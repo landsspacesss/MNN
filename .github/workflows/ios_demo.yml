@@ -21,7 +21,7 @@ jobs:
         with:
           xcode-version: latest-stable
       
-      - name: Build MNN iOS Framework
+      - name: Build MNN iOS Framework (With Diffusion)
         run: |
           cd project/ios
           
@@ -31,6 +31,7 @@ jobs:
           mkdir -p MNN-iOS-CPU-GPU/Static/ios_64
           cd MNN-iOS-CPU-GPU/Static/ios_64
           
+          # 启用 diffusion 和必要依赖
           cmake "$MNN_ROOT" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$MNN_ROOT/cmake/ios.toolchain.cmake" \
@@ -45,6 +46,9 @@ jobs:
             -DMNN_LOW_MEMORY=true \
             -DMNN_SUPPORT_TRANSFORMER_FUSE=true \
             -DMNN_BUILD_LLM=true \
+            -DMNN_BUILD_DIFFUSION=ON \
+            -DMNN_BUILD_OPENCV=ON \
+            -DMNN_IMGCODECS=ON \
             -DMNN_CPU_WEIGHT_DEQUANT_GEMM=true
           
           make MNN -j$(sysctl -n hw.ncpu)
@@ -52,6 +56,11 @@ jobs:
           cd ..
           mv ios_64/MNN.framework MNN.framework
           rm -rf ios_64
+          
+          # 检查 framework 结构，确保头文件正确
+          echo "=== 检查 Framework 头文件 ==="
+          ls -la MNN.framework/Headers/ | head -20
+          find MNN.framework/Headers -name "diffusion*" -type f || echo "未找到 diffusion 头文件"
       
       - name: Upload MNN Framework Artifact
         uses: actions/upload-artifact@v4
@@ -81,30 +90,42 @@ jobs:
           name: MNN.framework
           path: apps/iOS/MNNLLMChat/Frameworks/MNN.framework
       
-      - name: Verify Framework
+      - name: Verify Framework and Headers
         run: |
           echo "=== 验证 Framework ==="
           ls -la apps/iOS/MNNLLMChat/Frameworks/
-          ls -la apps/iOS/MNNLLMChat/Frameworks/MNN.framework/ || echo "Framework 不存在"
+          ls -la apps/iOS/MNNLLMChat/Frameworks/MNN.framework/Headers/ | head -20
+          
+          echo "=== 查找 diffusion 头文件 ==="
+          find apps/iOS/MNNLLMChat/Frameworks/MNN.framework -name "*diffusion*" -type f || echo "未找到 diffusion 头文件"
+          
+          echo "=== 检查 MNN 头文件目录 ==="
+          ls -la apps/iOS/MNNLLMChat/Frameworks/MNN.framework/Headers/MNN/ 2>/dev/null || echo "MNN 子目录不存在"
       
-      - name: Build and Archive (Unsigned)
+      - name: Add Header Search Paths (Fix)
         run: |
           cd apps/iOS/MNNLLMChat
           
-          echo "=== 当前目录 ==="
-          pwd
-          ls -la
+          # 如果 framework 中没有 diffusion 头文件，从源码复制
+          if [ ! -f "Frameworks/MNN.framework/Headers/MNN/diffusion/diffusion.hpp" ]; then
+            echo "从 MNN 源码复制 diffusion 头文件..."
+            mkdir -p Frameworks/MNN.framework/Headers/MNN/diffusion
+            cp ${{ github.workspace }}/include/MNN/diffusion/diffusion.hpp Frameworks/MNN.framework/Headers/MNN/diffusion/ 2>/dev/null || \
+            cp ${{ github.workspace }}/source/diffusion/diffusion.hpp Frameworks/MNN.framework/Headers/MNN/diffusion/ 2>/dev/null || \
+            echo "警告: 无法找到 diffusion.hpp 源文件"
+          fi
+      
+      - name: Build and Archive (Unsigned)
+        run: |
+          set -e
+          cd apps/iOS/MNNLLMChat
           
-          # 清理
           rm -rf build MNNLLMiOS.xcarchive
           
-          # 使用绝对路径
           ARCHIVE_PATH="${{ github.workspace }}/apps/iOS/MNNLLMChat/MNNLLMiOS.xcarchive"
           
           echo "=== 开始构建 Archive ==="
-          echo "Archive 路径: $ARCHIVE_PATH"
           
-          # 执行构建，确保错误被捕获
           set -o pipefail
           xcodebuild clean archive \
             -project MNNLLMiOS.xcodeproj \
@@ -115,52 +136,41 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            ENABLE_BITCODE=NO | tee build.log
+            ENABLE_BITCODE=NO \
+            HEADER_SEARCH_PATHS="${{ github.workspace }}/include ${{ github.workspace }}/source" \
+            2>&1 | tee build.log
           
           EXIT_CODE=$?
           echo "=== xcodebuild 退出码: $EXIT_CODE ==="
           
           if [ $EXIT_CODE -ne 0 ]; then
-            echo "xcodebuild 失败，查看日志:"
-            cat build.log
+            echo "=== 构建失败，查看详细日志 ==="
+            cat build.log | tail -100
             exit 1
           fi
-          
-          echo "=== 构建完成，检查 Archive ==="
-          ls -la "$ARCHIVE_PATH" || echo "Archive 目录不存在"
       
       - name: Create Unsigned IPA
         if: success()
         run: |
+          set -e
           cd apps/iOS/MNNLLMChat
           
           ARCHIVE_PATH="${{ github.workspace }}/apps/iOS/MNNLLMChat/MNNLLMiOS.xcarchive"
           
-          echo "=== 检查 Archive 内容 ==="
-          ls -la "$ARCHIVE_PATH" || true
-          find "$ARCHIVE_PATH" -type f -name "*.app" 2>/dev/null || true
-          
-          # 查找 .app 文件
           APP_PATH=$(find "$ARCHIVE_PATH" -name "*.app" -type d | head -1)
           
           if [ -z "$APP_PATH" ]; then
-            echo "错误: 在 Archive 中未找到 .app 文件"
-            echo "Archive 完整内容:"
-            find "$ARCHIVE_PATH"
+            echo "错误: 未找到 .app 文件"
             exit 1
           fi
           
           echo "找到 .app: $APP_PATH"
           
-          # 创建 Payload 目录并打包
           mkdir -p Payload
           cp -r "$APP_PATH" Payload/
-          
-          # 打包为 IPA
           zip -r MNNLLMiOS-unsigned.ipa Payload
           rm -rf Payload
           
-          echo "成功创建 IPA:"
           ls -lh MNNLLMiOS-unsigned.ipa
       
       - name: Upload Unsigned IPA
