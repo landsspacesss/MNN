@@ -21,7 +21,7 @@ jobs:
         with:
           xcode-version: latest-stable
       
-      - name: Build MNN iOS Framework (With Diffusion)
+      - name: Build MNN iOS Framework
         run: |
           cd project/ios
           
@@ -31,7 +31,6 @@ jobs:
           mkdir -p MNN-iOS-CPU-GPU/Static/ios_64
           cd MNN-iOS-CPU-GPU/Static/ios_64
           
-          # 启用 diffusion 和必要依赖
           cmake "$MNN_ROOT" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$MNN_ROOT/cmake/ios.toolchain.cmake" \
@@ -56,11 +55,6 @@ jobs:
           cd ..
           mv ios_64/MNN.framework MNN.framework
           rm -rf ios_64
-          
-          # 检查 framework 结构，确保头文件正确
-          echo "=== 检查 Framework 头文件 ==="
-          ls -la MNN.framework/Headers/ | head -20
-          find MNN.framework/Headers -name "diffusion*" -type f || echo "未找到 diffusion 头文件"
       
       - name: Upload MNN Framework Artifact
         uses: actions/upload-artifact@v4
@@ -84,35 +78,73 @@ jobs:
         with:
           xcode-version: latest-stable
       
+      - name: Clean Xcode and SPM Cache
+        run: |
+          echo "=== 清理 Xcode 和 SPM 缓存 ==="
+          rm -rf ~/Library/Developer/Xcode/DerivedData/*
+          rm -rf ~/Library/Caches/org.swift.swiftpm/
+          rm -rf .build/
+      
       - name: Download MNN Framework
         uses: actions/download-artifact@v4
         with:
           name: MNN.framework
           path: apps/iOS/MNNLLMChat/Frameworks/MNN.framework
       
-      - name: Verify Framework and Headers
-        run: |
-          echo "=== 验证 Framework ==="
-          ls -la apps/iOS/MNNLLMChat/Frameworks/
-          ls -la apps/iOS/MNNLLMChat/Frameworks/MNN.framework/Headers/ | head -20
-          
-          echo "=== 查找 diffusion 头文件 ==="
-          find apps/iOS/MNNLLMChat/Frameworks/MNN.framework -name "*diffusion*" -type f || echo "未找到 diffusion 头文件"
-          
-          echo "=== 检查 MNN 头文件目录 ==="
-          ls -la apps/iOS/MNNLLMChat/Frameworks/MNN.framework/Headers/MNN/ 2>/dev/null || echo "MNN 子目录不存在"
-      
-      - name: Add Header Search Paths (Fix)
+      - name: Resolve Swift Packages
         run: |
           cd apps/iOS/MNNLLMChat
           
-          # 如果 framework 中没有 diffusion 头文件，从源码复制
-          if [ ! -f "Frameworks/MNN.framework/Headers/MNN/diffusion/diffusion.hpp" ]; then
-            echo "从 MNN 源码复制 diffusion 头文件..."
-            mkdir -p Frameworks/MNN.framework/Headers/MNN/diffusion
-            cp ${{ github.workspace }}/include/MNN/diffusion/diffusion.hpp Frameworks/MNN.framework/Headers/MNN/diffusion/ 2>/dev/null || \
-            cp ${{ github.workspace }}/source/diffusion/diffusion.hpp Frameworks/MNN.framework/Headers/MNN/diffusion/ 2>/dev/null || \
-            echo "警告: 无法找到 diffusion.hpp 源文件"
+          echo "=== 解析 Swift Packages ==="
+          xcodebuild -resolvePackageDependencies \
+            -project MNNLLMiOS.xcodeproj \
+            -scheme MNNLLMiOS \
+            -destination 'generic/platform=iOS' \
+            2>&1 | tee resolve.log
+          
+          echo "=== 检查 SourcePackages ==="
+          ls -la ~/Library/Developer/Xcode/DerivedData/*/SourcePackages/checkouts/ 2>/dev/null || true
+          find ~/Library/Developer/Xcode/DerivedData -name "cmark-gfm*" -type d 2>/dev/null | head -5
+      
+      - name: Pre-build cmark-gfm (Fix config.h)
+        run: |
+          echo "=== 查找并修复 cmark-gfm ==="
+          
+          # 查找 cmark-gfm 目录
+          CMARK_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "cmark-gfm" -type d 2>/dev/null | head -1)
+          
+          if [ -n "$CMARK_PATH" ]; then
+            echo "找到 cmark-gfm: $CMARK_PATH"
+            
+            # 检查是否存在 config.h
+            if [ ! -f "$CMARK_PATH/src/cmark-gfm_config.h" ]; then
+              echo "生成 cmark-gfm_config.h..."
+              
+              # 进入 cmark-gfm 目录并运行 cmake 生成配置文件
+              cd "$CMARK_PATH"
+              
+              # 创建构建目录并生成配置
+              mkdir -p build
+              cd build
+              cmake .. \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_TOOLCHAIN_FILE=$(xcrun --show-sdk-path)/../Toolchains/XcodeDefault.xctoolchain/usr/share/cmake/ios.toolchain.cmake \
+                -DARCHS="arm64" \
+                -DENABLE_BITCODE=NO
+              
+              # 复制生成的 config.h
+              if [ -f "src/cmark-gfm_config.h" ]; then
+                cp src/cmark-gfm_config.h ../src/
+                echo "已复制 cmark-gfm_config.h"
+              elif [ -f "cmark-gfm_config.h" ]; then
+                cp cmark-gfm_config.h ../src/
+                echo "已复制 cmark-gfm_config.h (根目录)"
+              fi
+            else
+              echo "cmark-gfm_config.h 已存在"
+            fi
+          else
+            echo "警告: 未找到 cmark-gfm 目录"
           fi
       
       - name: Build and Archive (Unsigned)
@@ -126,6 +158,7 @@ jobs:
           
           echo "=== 开始构建 Archive ==="
           
+          # 使用 -skipPackagePluginValidation 避免 SPM 插件验证问题
           set -o pipefail
           xcodebuild clean archive \
             -project MNNLLMiOS.xcodeproj \
@@ -133,11 +166,12 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$ARCHIVE_PATH" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             ENABLE_BITCODE=NO \
-            HEADER_SEARCH_PATHS="${{ github.workspace }}/include ${{ github.workspace }}/source" \
             2>&1 | tee build.log
           
           EXIT_CODE=$?
@@ -145,7 +179,7 @@ jobs:
           
           if [ $EXIT_CODE -ne 0 ]; then
             echo "=== 构建失败，查看详细日志 ==="
-            cat build.log | tail -100
+            cat build.log | tail -150
             exit 1
           fi
       
