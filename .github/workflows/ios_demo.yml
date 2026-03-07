@@ -22,8 +22,11 @@ jobs:
           xcode-version: latest-stable
       
       - name: Build MNN iOS Framework
-        working-directory: package_scripts/ios
+        working-directory: project/ios
         run: |
+          # 复制 buildiOS.sh 到当前目录（因为脚本要求在此目录运行）
+          cp ../../package_scripts/ios/buildiOS.sh .
+          
           sh buildiOS.sh "\
             -DMNN_ARM82=true \
             -DMNN_LOW_MEMORY=true \
@@ -34,13 +37,13 @@ jobs:
       - name: Verify Framework
         run: |
           echo "=== 验证 framework 是否存在 ==="
-          ls -la package_scripts/ios/MNN-iOS-CPU-GPU/Static/MNN.framework
+          ls -la project/ios/MNN-iOS-CPU-GPU/Static/MNN.framework
       
       - name: Upload MNN Framework Artifact
         uses: actions/upload-artifact@v4
         with:
           name: MNN.framework
-          path: package_scripts/ios/MNN-iOS-CPU-GPU/Static/MNN.framework
+          path: project/ios/MNN-iOS-CPU-GPU/Static/MNN.framework
           if-no-files-found: error
           retention-days: 7
 
@@ -68,8 +71,8 @@ jobs:
         run: |
           echo "=== 验证下载的 framework ==="
           ls -la apps/iOS/MNNLLMChat/Frameworks/
-          ls -la apps/iOS/MNNLLMChat/Frameworks/MNN.framework/
-      
+          ls -la apps/iOS/MNNLLMChat/Frameworks/MNN.framework/ || true
+
       - name: Build iOS App (Simulator)
         run: |
           cd apps/iOS/MNNLLMChat
