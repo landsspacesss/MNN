@@ -22,22 +22,34 @@ jobs:
           xcode-version: latest-stable
       
       - name: Build MNN iOS Framework
-        working-directory: project/ios
         run: |
-          # 复制 buildiOS.sh 到当前目录（因为脚本要求在此目录运行）
+          # 必须在 project/ios 目录下运行脚本
+          cd project/ios
+          
+          # 从 package_scripts/ios 复制脚本到当前目录
           cp ../../package_scripts/ios/buildiOS.sh .
           
+          # 执行构建（传递 LLM 相关参数）
           sh buildiOS.sh "\
             -DMNN_ARM82=true \
             -DMNN_LOW_MEMORY=true \
             -DMNN_SUPPORT_TRANSFORMER_FUSE=true \
             -DMNN_BUILD_LLM=true \
-            -DMNN_METAL=ON"
+            -DMNN_METAL=ON \
+            -DMNN_CPU_WEIGHT_DEQUANT_GEMM=true"
       
       - name: Verify Framework
         run: |
-          echo "=== 验证 framework 是否存在 ==="
-          ls -la project/ios/MNN-iOS-CPU-GPU/Static/MNN.framework
+          echo "=== 当前目录结构 ==="
+          pwd
+          ls -la project/ios/
+          
+          echo "=== 查找 MNN.framework ==="
+          find project/ios -name "MNN.framework" -type d 2>/dev/null || true
+          
+          echo "=== 检查 MNN-iOS-CPU-GPU 目录 ==="
+          ls -la project/ios/MNN-iOS-CPU-GPU/ 2>/dev/null || true
+          ls -la project/ios/MNN-iOS-CPU-GPU/Static/ 2>/dev/null || true
       
       - name: Upload MNN Framework Artifact
         uses: actions/upload-artifact@v4
