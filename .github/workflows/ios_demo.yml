@@ -1,13 +1,7 @@
-name: iOS MNN LLM Chat Build
+name: iOS MNN LLM Chat Build (Fixed)
 
 on:
   push:
-    branches: [ master, main ]
-    paths:
-      - 'apps/iOS/MNNLLMChat/**'
-      - 'package_scripts/ios/**'
-      - '.github/workflows/ios-build.yml'
-  pull_request:
     branches: [ master, main ]
   workflow_dispatch:
 
@@ -28,25 +22,26 @@ jobs:
           xcode-version: latest-stable
       
       - name: Build MNN iOS Framework
+        working-directory: package_scripts/ios
         run: |
-          cd package_scripts/ios
           sh buildiOS.sh "\
             -DMNN_ARM82=true \
             -DMNN_LOW_MEMORY=true \
             -DMNN_SUPPORT_TRANSFORMER_FUSE=true \
             -DMNN_BUILD_LLM=true \
-            -DMNN_METAL=ON \
-            -DMNN_BUILD_DIFFUSION=ON \
-            -DMNN_BUILD_OPENCV=ON \
-            -DMNN_IMGCODECS=ON \
-            -DMNN_OPENCL=OFF \
-            -DMNN_SEP_BUILD=OFF"
+            -DMNN_METAL=ON"
+      
+      - name: Verify Framework
+        run: |
+          echo "=== 验证 framework 是否存在 ==="
+          ls -la package_scripts/ios/MNN-iOS-CPU-GPU/Static/MNN.framework
       
       - name: Upload MNN Framework Artifact
         uses: actions/upload-artifact@v4
         with:
           name: MNN.framework
-          path: MNN-iOS-CPU-GPU/Static/MNN.framework
+          path: package_scripts/ios/MNN-iOS-CPU-GPU/Static/MNN.framework
+          if-no-files-found: error
           retention-days: 7
 
   build-ios-app:
@@ -67,40 +62,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: MNN.framework
-          path: apps/iOS/MNNLLMChat/MNN.framework
+          path: apps/iOS/MNNLLMChat/Frameworks/MNN.framework
       
-      - name: Setup Signing (Optional)
-        env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      - name: Verify Download
         run: |
-          # 如果有签名证书，配置签名
-          if [ -n "$BUILD_CERTIFICATE_BASE64" ]; then
-            CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-            PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
-            KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-            
-            echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
-            echo "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode > $PP_PATH
-            
-            security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-            security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-            security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-            
-            security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-            security list-keychain -d user -s $KEYCHAIN_PATH
-            
-            mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-            cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
-          fi
+          echo "=== 验证下载的 framework ==="
+          ls -la apps/iOS/MNNLLMChat/Frameworks/
+          ls -la apps/iOS/MNNLLMChat/Frameworks/MNN.framework/
       
       - name: Build iOS App (Simulator)
         run: |
           cd apps/iOS/MNNLLMChat
           
-          # 如果没有签名，使用模拟器构建
           xcodebuild clean build \
             -project MNNLLMiOS.xcodeproj \
             -scheme MNNLLMiOS \
@@ -108,46 +81,3 @@ jobs:
             -derivedDataPath build \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO
-      
-      - name: Build iOS App (Device - Unsigned)
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          cd apps/iOS/MNNLLMChat
-          
-          # 尝试构建真机版本（无签名）
-          xcodebuild clean build \
-            -project MNNLLMiOS.xcodeproj \
-            -scheme MNNLLMiOS \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath build \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            || echo "Device build requires signing certificate"
-      
-      - name: Upload App Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MNNLLMChat-iOS
-          path: package_scripts/ios/build/Release-iphoneos/MNN.framework
-          if-no-files-found: error
-          retention-days: 7
-
-  release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    needs: [build-mnn-framework, build-ios-app]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-      
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            MNN.framework/**/*
-            MNNLLMChat-iOS/**/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
