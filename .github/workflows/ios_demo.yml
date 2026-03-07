@@ -129,7 +129,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MNNLLMChat-iOS
-          path: apps/iOS/MNNLLMChat/build/Build/Products/
+          path: package_scripts/ios/build/Release-iphoneos/MNN.framework
+          if-no-files-found: error
           retention-days: 7
 
   release:
