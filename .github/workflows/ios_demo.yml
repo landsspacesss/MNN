@@ -1,4 +1,4 @@
-name: iOS MNN LLM Chat Build (Debug)
+name: iOS MNN LLM Chat Build (Fixed)
 
 on:
   push:
@@ -21,81 +21,64 @@ jobs:
         with:
           xcode-version: latest-stable
       
-      - name: Check directory structure
+      - name: Verify CMakeLists.txt location
         run: |
-          echo "=== 仓库根目录 ==="
-          pwd
-          ls -la
+          echo "=== 查找 CMakeLists.txt ==="
+          find ${{ github.workspace }} -name "CMakeLists.txt" -maxdepth 2 | head -5
           
-          echo "=== project/ios 目录 ==="
-          ls -la project/ios/ 2>/dev/null || echo "目录不存在"
-          
-          echo "=== package_scripts/ios 目录 ==="
-          ls -la package_scripts/ios/ 2>/dev/null || echo "目录不存在"
-          
-          echo "=== 检查 buildiOS.sh ==="
-          cat package_scripts/ios/buildiOS.sh | head -20
+          echo "=== 仓库根目录内容 ==="
+          ls -la ${{ github.workspace }}/
       
       - name: Build MNN iOS Framework
         run: |
           cd project/ios
           
-          # 复制脚本
-          cp ../../package_scripts/ios/buildiOS.sh .
+          # 使用绝对路径执行构建
+          MNN_ROOT="${{ github.workspace }}"
           
-          echo "=== 开始构建 ==="
-          echo "当前目录: $(pwd)"
+          rm -rf MNN-iOS-CPU-GPU
+          mkdir -p MNN-iOS-CPU-GPU/Static/ios_64
+          cd MNN-iOS-CPU-GPU/Static/ios_64
           
-          # 执行构建，并捕获所有输出
-          sh -x buildiOS.sh "\
+          cmake "$MNN_ROOT" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$MNN_ROOT/cmake/ios.toolchain.cmake" \
+            -DMNN_METAL=ON \
+            -DARCHS="arm64" \
+            -DENABLE_BITCODE=0 \
+            -DMNN_AAPL_FMWK=1 \
+            -DMNN_SEP_BUILD=0 \
             -DMNN_ARM82=true \
+            -DMNN_BUILD_SHARED_LIBS=false \
+            -DMNN_USE_THREAD_POOL=OFF \
             -DMNN_LOW_MEMORY=true \
             -DMNN_SUPPORT_TRANSFORMER_FUSE=true \
             -DMNN_BUILD_LLM=true \
-            -DMNN_METAL=ON \
-            -DMNN_CPU_WEIGHT_DEQUANT_GEMM=true" 2>&1 | tee build.log
+            -DMNN_CPU_WEIGHT_DEQUANT_GEMM=true
           
-          echo "=== 构建脚本退出码: $? ==="
+          make MNN -j$(sysctl -n hw.ncpu)
+          
+          cd ..
+          mv ios_64/MNN.framework MNN.framework
+          rm -rf ios_64
       
-      - name: Debug - Check all directories
-        if: always()
+      - name: Verify Framework
         run: |
-          echo "=== 检查 project/ios 目录结构 ==="
-          ls -la project/ios/
-          
-          echo "=== 查找所有 framework ==="
-          find project/ios -name "*.framework" -type d 2>/dev/null || echo "未找到 framework"
-          
-          echo "=== 检查 MNN-iOS-CPU-GPU ==="
-          ls -la project/ios/MNN-iOS-CPU-GPU/ 2>/dev/null || echo "MNN-iOS-CPU-GPU 不存在"
-          
-          ls -la project/ios/MNN-iOS-CPU-GPU/Static/ 2>/dev/null || echo "Static 不存在"
-          
-          echo "=== 检查 ios_64 ==="
-          ls -la project/ios/MNN-iOS-CPU-GPU/Static/ios_64/ 2>/dev/null || echo "ios_64 不存在"
-          
-          echo "=== 构建日志最后 50 行 ==="
-          tail -50 project/ios/build.log 2>/dev/null || echo "无日志文件"
+          echo "=== 验证 framework ==="
+          ls -la project/ios/MNN-iOS-CPU-GPU/Static/MNN.framework
       
       - name: Upload MNN Framework Artifact
         uses: actions/upload-artifact@v4
         with:
           name: MNN.framework
           path: project/ios/MNN-iOS-CPU-GPU/Static/MNN.framework
-          if-no-files-found: warn
-      
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
-          path: project/ios/build.log
+          if-no-files-found: error
+          retention-days: 7
 
   build-ios-app:
     name: Build iOS App
     runs-on: macos-latest
     needs: build-mnn-framework
-    if: needs.build-mnn-framework.result == 'success'
     
     steps:
       - name: Checkout repository
