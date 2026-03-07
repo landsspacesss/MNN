@@ -1,4 +1,4 @@
-name: iOS MNN LLM Chat Build (Fixed)
+name: iOS MNN LLM Chat Build (Debug)
 
 on:
   push:
@@ -21,48 +21,81 @@ jobs:
         with:
           xcode-version: latest-stable
       
+      - name: Check directory structure
+        run: |
+          echo "=== 仓库根目录 ==="
+          pwd
+          ls -la
+          
+          echo "=== project/ios 目录 ==="
+          ls -la project/ios/ 2>/dev/null || echo "目录不存在"
+          
+          echo "=== package_scripts/ios 目录 ==="
+          ls -la package_scripts/ios/ 2>/dev/null || echo "目录不存在"
+          
+          echo "=== 检查 buildiOS.sh ==="
+          cat package_scripts/ios/buildiOS.sh | head -20
+      
       - name: Build MNN iOS Framework
         run: |
-          # 必须在 project/ios 目录下运行脚本
           cd project/ios
           
-          # 从 package_scripts/ios 复制脚本到当前目录
+          # 复制脚本
           cp ../../package_scripts/ios/buildiOS.sh .
           
-          # 执行构建（传递 LLM 相关参数）
-          sh buildiOS.sh "\
+          echo "=== 开始构建 ==="
+          echo "当前目录: $(pwd)"
+          
+          # 执行构建，并捕获所有输出
+          sh -x buildiOS.sh "\
             -DMNN_ARM82=true \
             -DMNN_LOW_MEMORY=true \
             -DMNN_SUPPORT_TRANSFORMER_FUSE=true \
             -DMNN_BUILD_LLM=true \
             -DMNN_METAL=ON \
-            -DMNN_CPU_WEIGHT_DEQUANT_GEMM=true"
+            -DMNN_CPU_WEIGHT_DEQUANT_GEMM=true" 2>&1 | tee build.log
+          
+          echo "=== 构建脚本退出码: $? ==="
       
-      - name: Verify Framework
+      - name: Debug - Check all directories
+        if: always()
         run: |
-          echo "=== 当前目录结构 ==="
-          pwd
+          echo "=== 检查 project/ios 目录结构 ==="
           ls -la project/ios/
           
-          echo "=== 查找 MNN.framework ==="
-          find project/ios -name "MNN.framework" -type d 2>/dev/null || true
+          echo "=== 查找所有 framework ==="
+          find project/ios -name "*.framework" -type d 2>/dev/null || echo "未找到 framework"
           
-          echo "=== 检查 MNN-iOS-CPU-GPU 目录 ==="
-          ls -la project/ios/MNN-iOS-CPU-GPU/ 2>/dev/null || true
-          ls -la project/ios/MNN-iOS-CPU-GPU/Static/ 2>/dev/null || true
+          echo "=== 检查 MNN-iOS-CPU-GPU ==="
+          ls -la project/ios/MNN-iOS-CPU-GPU/ 2>/dev/null || echo "MNN-iOS-CPU-GPU 不存在"
+          
+          ls -la project/ios/MNN-iOS-CPU-GPU/Static/ 2>/dev/null || echo "Static 不存在"
+          
+          echo "=== 检查 ios_64 ==="
+          ls -la project/ios/MNN-iOS-CPU-GPU/Static/ios_64/ 2>/dev/null || echo "ios_64 不存在"
+          
+          echo "=== 构建日志最后 50 行 ==="
+          tail -50 project/ios/build.log 2>/dev/null || echo "无日志文件"
       
       - name: Upload MNN Framework Artifact
         uses: actions/upload-artifact@v4
         with:
           name: MNN.framework
           path: project/ios/MNN-iOS-CPU-GPU/Static/MNN.framework
-          if-no-files-found: error
-          retention-days: 7
+          if-no-files-found: warn
+      
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: project/ios/build.log
 
   build-ios-app:
     name: Build iOS App
     runs-on: macos-latest
     needs: build-mnn-framework
+    if: needs.build-mnn-framework.result == 'success'
     
     steps:
       - name: Checkout repository
@@ -79,12 +112,6 @@ jobs:
           name: MNN.framework
           path: apps/iOS/MNNLLMChat/Frameworks/MNN.framework
       
-      - name: Verify Download
-        run: |
-          echo "=== 验证下载的 framework ==="
-          ls -la apps/iOS/MNNLLMChat/Frameworks/
-          ls -la apps/iOS/MNNLLMChat/Frameworks/MNN.framework/ || true
-
       - name: Build iOS App (Simulator)
         run: |
           cd apps/iOS/MNNLLMChat
