@@ -1,4 +1,4 @@
-name: iOS MNN LLM Chat Build (Fixed)
+name: iOS MNN LLM Chat Build Unsigned IPA
 
 on:
   push:
@@ -21,19 +21,10 @@ jobs:
         with:
           xcode-version: latest-stable
       
-      - name: Verify CMakeLists.txt location
-        run: |
-          echo "=== 查找 CMakeLists.txt ==="
-          find ${{ github.workspace }} -name "CMakeLists.txt" -maxdepth 2 | head -5
-          
-          echo "=== 仓库根目录内容 ==="
-          ls -la ${{ github.workspace }}/
-      
       - name: Build MNN iOS Framework
         run: |
           cd project/ios
           
-          # 使用绝对路径执行构建
           MNN_ROOT="${{ github.workspace }}"
           
           rm -rf MNN-iOS-CPU-GPU
@@ -62,11 +53,6 @@ jobs:
           mv ios_64/MNN.framework MNN.framework
           rm -rf ios_64
       
-      - name: Verify Framework
-        run: |
-          echo "=== 验证 framework ==="
-          ls -la project/ios/MNN-iOS-CPU-GPU/Static/MNN.framework
-      
       - name: Upload MNN Framework Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -74,39 +60,6 @@ jobs:
           path: project/ios/MNN-iOS-CPU-GPU/Static/MNN.framework
           if-no-files-found: error
           retention-days: 7
-
-  build-ios-app:
-    name: Build iOS App
-    runs-on: macos-latest
-    needs: build-mnn-framework
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      
-      - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
-      
-      - name: Download MNN Framework
-        uses: actions/download-artifact@v4
-        with:
-          name: MNN.framework
-          path: apps/iOS/MNNLLMChat/Frameworks/MNN.framework
-      
-      - name: Build iOS App (Simulator)
-        run: |
-          cd apps/iOS/MNNLLMChat
-          
-          xcodebuild clean build \
-            -project MNNLLMiOS.xcodeproj \
-            -scheme MNNLLMiOS \
-            -destination 'platform=iOS Simulator' \
-            -derivedDataPath build \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO
-
 
   build-unsigned-ipa:
     name: Build Unsigned IPA
@@ -128,12 +81,31 @@ jobs:
           name: MNN.framework
           path: apps/iOS/MNNLLMChat/Frameworks/MNN.framework
       
-      - name: Build and Archive (Unsigned)
+      - name: Debug Project Structure
         run: |
           cd apps/iOS/MNNLLMChat
+          echo "=== 项目目录结构 ==="
+          ls -la
           
-          # 清理之前的构建
+          echo "=== 查找 xcodeproj ==="
+          find . -name "*.xcodeproj" -type d
+          
+          echo "=== 查找 scheme ==="
+          xcodebuild -list -project MNNLLMiOS.xcodeproj 2>&1 || true
+      
+      - name: Build and Archive (Unsigned)
+        run: |
+          set -e  # 遇到错误立即退出
+          cd apps/iOS/MNNLLMChat
+          
+          # 清理
           rm -rf build MNNLLMiOS.xcarchive
+          
+          # 获取绝对路径
+          ARCHIVE_PATH="${{ github.workspace }}/apps/iOS/MNNLLMChat/MNNLLMiOS.xcarchive"
+          
+          echo "=== 开始构建 Archive ==="
+          echo "Archive 路径: $ARCHIVE_PATH"
           
           # 构建并归档（无签名）
           xcodebuild clean archive \
@@ -141,40 +113,46 @@ jobs:
             -scheme MNNLLMiOS \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath MNNLLMiOS.xcarchive \
+            -archivePath "$ARCHIVE_PATH" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             ENABLE_BITCODE=NO \
-            | tee build.log
+            2>&1 | tee build.log
+          
+          echo "=== 构建完成，检查 Archive ==="
+          ls -la "$ARCHIVE_PATH" || echo "Archive 目录不存在"
+          find "$ARCHIVE_PATH" -name "*.app" -type d 2>/dev/null || echo "未找到 .app"
       
-      - name: Create Unsigned IPA (Payload Method)
+      - name: Create Unsigned IPA
         run: |
+          set -e
           cd apps/iOS/MNNLLMChat
           
-          # 方法1: 直接从 xcarchive 提取 .app 并打包为 IPA
-          APP_PATH="MNNLLMiOS.xcarchive/Products/Applications/MNNLLMiOS.app"
+          ARCHIVE_PATH="${{ github.workspace }}/apps/iOS/MNNLLMChat/MNNLLMiOS.xcarchive"
           
-          if [ -d "$APP_PATH" ]; then
-            echo "找到 .app 文件: $APP_PATH"
-            
-            # 创建 Payload 目录
-            mkdir -p Payload
-            cp -r "$APP_PATH" Payload/
-            
-            # 打包为 IPA (无签名)
-            zip -r MNNLLMiOS-unsigned.ipa Payload
-            
-            # 清理
-            rm -rf Payload
-            
-            echo "成功创建无签名 IPA: MNNLLMiOS-unsigned.ipa"
-            ls -lh MNNLLMiOS-unsigned.ipa
-          else
-            echo "错误: 未找到 .app 文件"
-            find MNNLLMiOS.xcarchive -name "*.app" -type d
+          # 查找 .app 文件
+          APP_PATH=$(find "$ARCHIVE_PATH" -name "*.app" -type d | head -1)
+          
+          if [ -z "$APP_PATH" ]; then
+            echo "错误: 在 Archive 中未找到 .app 文件"
+            echo "Archive 内容:"
+            find "$ARCHIVE_PATH" -type f
             exit 1
           fi
+          
+          echo "找到 .app: $APP_PATH"
+          
+          # 创建 Payload 目录并打包
+          mkdir -p Payload
+          cp -r "$APP_PATH" Payload/
+          
+          # 打包为 IPA
+          zip -r MNNLLMiOS-unsigned.ipa Payload
+          rm -rf Payload
+          
+          echo "成功创建 IPA:"
+          ls -lh MNNLLMiOS-unsigned.ipa
       
       - name: Upload Unsigned IPA
         uses: actions/upload-artifact@v4
