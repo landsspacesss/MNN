@@ -102,7 +102,92 @@ jobs:
           xcodebuild clean build \
             -project MNNLLMiOS.xcodeproj \
             -scheme MNNLLMiOS \
-            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -destination 'platform=iOS Simulator' \
             -derivedDataPath build \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO
+
+
+  build-unsigned-ipa:
+    name: Build Unsigned IPA
+    runs-on: macos-latest
+    needs: build-mnn-framework
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      
+      - name: Download MNN Framework
+        uses: actions/download-artifact@v4
+        with:
+          name: MNN.framework
+          path: apps/iOS/MNNLLMChat/Frameworks/MNN.framework
+      
+      - name: Build and Archive (Unsigned)
+        run: |
+          cd apps/iOS/MNNLLMChat
+          
+          # 清理之前的构建
+          rm -rf build MNNLLMiOS.xcarchive
+          
+          # 构建并归档（无签名）
+          xcodebuild clean archive \
+            -project MNNLLMiOS.xcodeproj \
+            -scheme MNNLLMiOS \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath MNNLLMiOS.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ENABLE_BITCODE=NO \
+            | tee build.log
+      
+      - name: Create Unsigned IPA (Payload Method)
+        run: |
+          cd apps/iOS/MNNLLMChat
+          
+          # 方法1: 直接从 xcarchive 提取 .app 并打包为 IPA
+          APP_PATH="MNNLLMiOS.xcarchive/Products/Applications/MNNLLMiOS.app"
+          
+          if [ -d "$APP_PATH" ]; then
+            echo "找到 .app 文件: $APP_PATH"
+            
+            # 创建 Payload 目录
+            mkdir -p Payload
+            cp -r "$APP_PATH" Payload/
+            
+            # 打包为 IPA (无签名)
+            zip -r MNNLLMiOS-unsigned.ipa Payload
+            
+            # 清理
+            rm -rf Payload
+            
+            echo "成功创建无签名 IPA: MNNLLMiOS-unsigned.ipa"
+            ls -lh MNNLLMiOS-unsigned.ipa
+          else
+            echo "错误: 未找到 .app 文件"
+            find MNNLLMiOS.xcarchive -name "*.app" -type d
+            exit 1
+          fi
+      
+      - name: Upload Unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: MNNLLMiOS-unsigned-ipa
+          path: apps/iOS/MNNLLMChat/MNNLLMiOS-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Build Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: apps/iOS/MNNLLMChat/build.log
+          retention-days: 3
