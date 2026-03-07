@@ -81,33 +81,31 @@ jobs:
           name: MNN.framework
           path: apps/iOS/MNNLLMChat/Frameworks/MNN.framework
       
-      - name: Debug Project Structure
+      - name: Verify Framework
         run: |
-          cd apps/iOS/MNNLLMChat
-          echo "=== 项目目录结构 ==="
-          ls -la
-          
-          echo "=== 查找 xcodeproj ==="
-          find . -name "*.xcodeproj" -type d
-          
-          echo "=== 查找 scheme ==="
-          xcodebuild -list -project MNNLLMiOS.xcodeproj 2>&1 || true
+          echo "=== 验证 Framework ==="
+          ls -la apps/iOS/MNNLLMChat/Frameworks/
+          ls -la apps/iOS/MNNLLMChat/Frameworks/MNN.framework/ || echo "Framework 不存在"
       
       - name: Build and Archive (Unsigned)
         run: |
-          set -e  # 遇到错误立即退出
           cd apps/iOS/MNNLLMChat
+          
+          echo "=== 当前目录 ==="
+          pwd
+          ls -la
           
           # 清理
           rm -rf build MNNLLMiOS.xcarchive
           
-          # 获取绝对路径
+          # 使用绝对路径
           ARCHIVE_PATH="${{ github.workspace }}/apps/iOS/MNNLLMChat/MNNLLMiOS.xcarchive"
           
           echo "=== 开始构建 Archive ==="
           echo "Archive 路径: $ARCHIVE_PATH"
           
-          # 构建并归档（无签名）
+          # 执行构建，确保错误被捕获
+          set -o pipefail
           xcodebuild clean archive \
             -project MNNLLMiOS.xcodeproj \
             -scheme MNNLLMiOS \
@@ -117,27 +115,38 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            ENABLE_BITCODE=NO \
-            2>&1 | tee build.log
+            ENABLE_BITCODE=NO | tee build.log
+          
+          EXIT_CODE=$?
+          echo "=== xcodebuild 退出码: $EXIT_CODE ==="
+          
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "xcodebuild 失败，查看日志:"
+            cat build.log
+            exit 1
+          fi
           
           echo "=== 构建完成，检查 Archive ==="
           ls -la "$ARCHIVE_PATH" || echo "Archive 目录不存在"
-          find "$ARCHIVE_PATH" -name "*.app" -type d 2>/dev/null || echo "未找到 .app"
       
       - name: Create Unsigned IPA
+        if: success()
         run: |
-          set -e
           cd apps/iOS/MNNLLMChat
           
           ARCHIVE_PATH="${{ github.workspace }}/apps/iOS/MNNLLMChat/MNNLLMiOS.xcarchive"
+          
+          echo "=== 检查 Archive 内容 ==="
+          ls -la "$ARCHIVE_PATH" || true
+          find "$ARCHIVE_PATH" -type f -name "*.app" 2>/dev/null || true
           
           # 查找 .app 文件
           APP_PATH=$(find "$ARCHIVE_PATH" -name "*.app" -type d | head -1)
           
           if [ -z "$APP_PATH" ]; then
             echo "错误: 在 Archive 中未找到 .app 文件"
-            echo "Archive 内容:"
-            find "$ARCHIVE_PATH" -type f
+            echo "Archive 完整内容:"
+            find "$ARCHIVE_PATH"
             exit 1
           fi
           
@@ -155,6 +164,7 @@ jobs:
           ls -lh MNNLLMiOS-unsigned.ipa
       
       - name: Upload Unsigned IPA
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: MNNLLMiOS-unsigned-ipa
