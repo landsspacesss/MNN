@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
 
 env:
-  XCODE_VERSION: "15.2"
+  XCODE_VERSION: "16.2"
   BUILD_CONFIGURATION: "Release"
   APP_SCHEME: "MNNLLMiOS"
   APP_WORKDIR: "apps/iOS/MNNLLMChat"
@@ -27,7 +27,7 @@ env:
 jobs:
   build-mnn-framework:
     name: Build MNN.framework for iOS
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
 
     steps:
@@ -80,7 +80,7 @@ jobs:
 
   build-ios-app:
     name: Build MNNLLMChat App
-    runs-on: macos-14
+    runs-on: macos-15
     needs: build-mnn-framework
     timeout-minutes: 45
 
@@ -103,19 +103,18 @@ jobs:
           name: MNN-framework
           path: ${{ env.APP_WORKDIR }}/MNN.framework
 
-      - name: Delete Package.resolved (let Xcode regenerate)
+      - name: Clean Package.resolved
         working-directory: ${{ env.APP_WORKDIR }}
         run: |
           echo "=== Removing Package.resolved ==="
           find . -name "Package.resolved" -type f -delete
           rm -rf ~/Library/Developer/Xcode/DerivedData/MNNLLMiOS-*
           rm -rf ./DerivedData ./build
-          echo "✓ Package.resolved removed, Xcode will regenerate"
+          echo "✓ Cleaned"
 
       - name: Resolve package dependencies
         working-directory: ${{ env.APP_WORKDIR }}
         run: |
-          echo "=== Resolving SPM dependencies ==="
           xcodebuild -resolvePackageDependencies \
             -project MNNLLMiOS.xcodeproj \
             -scheme ${{ env.APP_SCHEME }} \
@@ -156,9 +155,8 @@ jobs:
           APP_PATH=$(find build/Build/Products -name "*.app" -type d 2>/dev/null | head -n1)
           if [ -n "$APP_PATH" ]; then
             cp -r "$APP_PATH" ./MNNLLMChat.app
-            echo "✓ Exported app"
+            echo "✓ Exported"
           else
-            echo "✗ No .app found"
             exit 1
           fi
 
