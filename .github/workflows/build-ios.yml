@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
 
 env:
-  XCODE_VERSION: "16.2"
+  XCODE_VERSION: "15.4"
   BUILD_CONFIGURATION: "Release"
   APP_SCHEME: "MNNLLMiOS"
   APP_WORKDIR: "apps/iOS/MNNLLMChat"
@@ -27,7 +27,7 @@ env:
 jobs:
   build-mnn-framework:
     name: Build MNN.framework for iOS
-    runs-on: macos-15
+    runs-on: macos-14
     timeout-minutes: 60
 
     steps:
@@ -39,7 +39,7 @@ jobs:
 
       - name: Select Xcode version
         run: |
-          sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app
+          sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
           xcodebuild -version
           swift --version
 
@@ -80,7 +80,7 @@ jobs:
 
   build-ios-app:
     name: Build MNNLLMChat App
-    runs-on: macos-15
+    runs-on: macos-14
     needs: build-mnn-framework
     timeout-minutes: 45
 
@@ -93,7 +93,7 @@ jobs:
 
       - name: Select Xcode version
         run: |
-          sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app
+          sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
           xcodebuild -version
           swift --version
 
@@ -110,16 +110,19 @@ jobs:
           find . -name "Package.resolved" -type f -delete
           rm -rf ~/Library/Developer/Xcode/DerivedData/MNNLLMiOS-*
           rm -rf ./DerivedData ./build
+          rm -rf ~/Library/Caches/org.swift.swiftpm
           echo "✓ Cleaned"
 
       - name: Resolve package dependencies
         working-directory: ${{ env.APP_WORKDIR }}
+        continue-on-error: true
         run: |
+          echo "=== Resolving SPM dependencies ==="
           xcodebuild -resolvePackageDependencies \
             -project MNNLLMiOS.xcodeproj \
             -scheme ${{ env.APP_SCHEME }} \
             -destination "generic/platform=iOS Simulator" \
-            -clonedSourcePackagesDirPath ./DerivedData/SourcePackages
+            -clonedSourcePackagesDirPath ./DerivedData/SourcePackages || true
 
       - name: Build iOS App (Simulator)
         working-directory: ${{ env.APP_WORKDIR }}
@@ -131,7 +134,8 @@ jobs:
             -destination "generic/platform=iOS Simulator" \
             -sdk iphonesimulator \
             CODE_SIGNING_ALLOWED=NO \
-            -skipPackagePluginValidation
+            -skipPackagePluginValidation \
+            -allowProvisioningUpdates
 
       - name: Build iOS App (Device)
         working-directory: ${{ env.APP_WORKDIR }}
@@ -147,7 +151,8 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGN_ENTITLEMENTS="" \
             CODE_SIGNING_REQUIRED=NO \
-            -skipPackagePluginValidation
+            -skipPackagePluginValidation \
+            -allowProvisioningUpdates
 
       - name: Export .app bundle
         working-directory: ${{ env.APP_WORKDIR }}
@@ -157,6 +162,8 @@ jobs:
             cp -r "$APP_PATH" ./MNNLLMChat.app
             echo "✓ Exported"
           else
+            echo "=== Build products ==="
+            find build/Build/Products -type d -name "*.app" || true
             exit 1
           fi
 
