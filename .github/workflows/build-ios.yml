@@ -19,7 +19,6 @@ on:
   workflow_dispatch:
 
 env:
-  XCODE_VERSION: "15.4"
   BUILD_CONFIGURATION: "Release"
   APP_SCHEME: "MNNLLMiOS"
   APP_WORKDIR: "apps/iOS/MNNLLMChat"
@@ -37,9 +36,8 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Select Xcode version
+      - name: Show Xcode version
         run: |
-          sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
           xcodebuild -version
           swift --version
 
@@ -91,9 +89,8 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Select Xcode version
+      - name: Show Xcode version
         run: |
-          sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
           xcodebuild -version
           swift --version
 
@@ -103,26 +100,13 @@ jobs:
           name: MNN-framework
           path: ${{ env.APP_WORKDIR }}/MNN.framework
 
-      - name: Clean Package.resolved
+      - name: Clean SPM cache
         working-directory: ${{ env.APP_WORKDIR }}
         run: |
-          echo "=== Removing Package.resolved ==="
           find . -name "Package.resolved" -type f -delete
           rm -rf ~/Library/Developer/Xcode/DerivedData/MNNLLMiOS-*
           rm -rf ./DerivedData ./build
           rm -rf ~/Library/Caches/org.swift.swiftpm
-          echo "✓ Cleaned"
-
-      - name: Resolve package dependencies
-        working-directory: ${{ env.APP_WORKDIR }}
-        continue-on-error: true
-        run: |
-          echo "=== Resolving SPM dependencies ==="
-          xcodebuild -resolvePackageDependencies \
-            -project MNNLLMiOS.xcodeproj \
-            -scheme ${{ env.APP_SCHEME }} \
-            -destination "generic/platform=iOS Simulator" \
-            -clonedSourcePackagesDirPath ./DerivedData/SourcePackages || true
 
       - name: Build iOS App (Simulator)
         working-directory: ${{ env.APP_WORKDIR }}
@@ -162,7 +146,6 @@ jobs:
             cp -r "$APP_PATH" ./MNNLLMChat.app
             echo "✓ Exported"
           else
-            echo "=== Build products ==="
             find build/Build/Products -type d -name "*.app" || true
             exit 1
           fi
