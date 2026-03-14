@@ -103,43 +103,33 @@ jobs:
           name: MNN-framework
           path: ${{ env.APP_WORKDIR }}/MNN.framework
 
-      - name: Clean and resolve SPM dependencies
+      - name: Clean SPM cache and resolve dependencies
         working-directory: ${{ env.APP_WORKDIR }}
         run: |
           echo "=== Cleaning SPM cache ==="
           
           # 删除所有 Package.resolved
           find . -name "Package.resolved" -type f -delete
+          echo "✓ Deleted Package.resolved files"
           
           # 清理 DerivedData
           rm -rf ~/Library/Developer/Xcode/DerivedData/MNNLLMiOS-*
           rm -rf ./DerivedData ./build
+          echo "✓ Cleaned DerivedData"
           
           # 清理 SwiftPM 缓存
           rm -rf ~/Library/Caches/org.swift.swiftpm/repositories
+          rm -rf ~/Library/Caches/org.swift.swiftpm/registry
+          echo "✓ Cleaned SwiftPM cache"
           
-          echo "=== Updating Swift packages ==="
-          # 使用 swift package update 解决版本冲突
-          swift package update
-
-      - name: Resolve package dependencies
-        working-directory: ${{ env.APP_WORKDIR }}
-        run: |
           echo "=== Resolving Xcode package dependencies ==="
+          # 直接使用 xcodebuild 解析依赖（不使用 swift package update）
           xcodebuild -resolvePackageDependencies \
             -project MNNLLMiOS.xcodeproj \
             -scheme ${{ env.APP_SCHEME }} \
             -destination "generic/platform=iOS" \
             -clonedSourcePackagesDirPath ./DerivedData/SourcePackages \
-            -verbose || {
-              echo "First resolve failed, trying with package reset..."
-              swift package reset
-              xcodebuild -resolvePackageDependencies \
-                -project MNNLLMiOS.xcodeproj \
-                -scheme ${{ env.APP_SCHEME }} \
-                -destination "generic/platform=iOS" \
-                -clonedSourcePackagesDirPath ./DerivedData/SourcePackages
-            }
+            -verbose
 
       - name: Cache Swift packages
         uses: actions/cache@v4
@@ -186,6 +176,7 @@ jobs:
             echo "✓ Exported app to ./MNNLLMChat.app"
           else
             echo "✗ Error: No .app bundle found"
+            find build/Build/Products -type d -name "*.app" || true
             exit 1
           fi
 
