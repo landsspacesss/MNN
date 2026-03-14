@@ -1,8 +1,5 @@
-name: iOS MNN LLM Chat Build Unsigned IPA
-
+name: iOS MNN LLM Chat Build Unsigned
 on:
-  push:
-    branches: [ master, main ]
   workflow_dispatch:
 
 jobs:
